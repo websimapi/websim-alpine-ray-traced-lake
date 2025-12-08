@@ -14,6 +14,10 @@ export class CameraController {
         this.phi = 1.4; // Pitch (High angle default)
 
         this.isLocked = false;
+        
+        this.collisionRaycaster = new THREE.Raycaster();
+        this.downRaycaster = new THREE.Raycaster();
+        this.downVec = new THREE.Vector3(0, -1, 0);
 
         this.initInput();
     }
@@ -54,7 +58,7 @@ export class CameraController {
         });
     }
 
-    update() {
+    update(terrainMesh) {
         if (!this.target) return;
 
         const isFirstPerson = this.distance < 1.0;
@@ -87,11 +91,46 @@ export class CameraController {
 
             const camPos = targetPos.clone().add(new THREE.Vector3(x, y, z));
 
-            // Collision detection with ground (simple floor check)
-            // If camera goes underground, lift it up
-            // Ideally we raycast from target to camera, but simple floor check works for now
-            // We'll rely on the terrain raycast from World.js if we wanted perfect collision,
-            // but for now, just don't let it go too low relative to target base if target is on ground.
+            // AAA Camera Collision
+            if (terrainMesh) {
+                // 1. Line of Sight Check (Target -> Camera)
+                // Prevents camera from going through walls/mountains
+                const dirToCam = camPos.clone().sub(targetPos);
+                const distToCam = dirToCam.length();
+                dirToCam.normalize();
+
+                // Raycast only up to the camera distance
+                this.collisionRaycaster.set(targetPos, dirToCam);
+                this.collisionRaycaster.far = distToCam;
+                
+                const intersects = this.collisionRaycaster.intersectObject(terrainMesh);
+                
+                if (intersects.length > 0) {
+                    // Hit terrain! Move camera to hit point minus buffer
+                    const hitDistance = intersects[0].distance;
+                    // Smoothly pull camera in, or snap? Snap is safer to avoid clipping.
+                    const buffer = 0.5; // Keep camera 0.5 units away from wall
+                    camPos.copy(targetPos).add(dirToCam.multiplyScalar(Math.max(0.1, hitDistance - buffer)));
+                }
+
+                // 2. Ground Collision Check
+                // Ensures camera doesn't go underground at its final position
+                this.downRaycaster.set(new THREE.Vector3(camPos.x, 1000, camPos.z), this.downVec);
+                const groundIntersects = this.downRaycaster.intersectObject(terrainMesh);
+
+                if (groundIntersects.length > 0) {
+                    const groundHeight = groundIntersects[0].point.y;
+                    const minHeight = groundHeight + 0.5; // Keep 0.5 units above ground
+                    
+                    if (camPos.y < minHeight) {
+                        camPos.y = minHeight;
+                        
+                        // If we raised the camera, it might have pushed it further back or forward awkwardly.
+                        // For a simple orbit, this height clamp is usually sufficient, 
+                        // though it changes the effective pitch relative to target.
+                    }
+                }
+            }
 
             // Just apply position
             this.camera.position.copy(camPos);

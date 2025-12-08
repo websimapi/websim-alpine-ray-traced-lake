@@ -5,6 +5,12 @@ import { SkySystem } from './components/Sky.js';
 import { Trees } from './components/Trees.js';
 import { Player } from './components/Player.js';
 import { CameraController } from './components/CameraController.js';
+import { Atmosphere } from './components/Atmosphere.js';
+
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 export class World {
     constructor(canvas) {
@@ -12,6 +18,7 @@ export class World {
         this.scene = null;
         this.camera = null;
         this.renderer = null;
+        this.composer = null; // Post-processing
         this.cameraController = null;
         this.player = null;
         this.raycaster = new THREE.Raycaster();
@@ -21,6 +28,7 @@ export class World {
         this.water = null;
         this.sky = null;
         this.trees = null;
+        this.atmosphere = null;
         this.clock = new THREE.Clock();
         this.audioContext = null;
         this.sound = null;
@@ -30,13 +38,15 @@ export class World {
         // Renderer
         this.renderer = new THREE.WebGLRenderer({ 
             canvas: this.canvas, 
-            antialias: true,
-            powerPreference: "high-performance"
+            antialias: false, // Turn off native antialias if using post-processing for performance
+            powerPreference: "high-performance",
+            stencil: false,
+            depth: true
         });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        this.renderer.toneMappingExposure = 0.5;
+        this.renderer.toneMappingExposure = 0.8; // Bump exposure slightly
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -47,31 +57,32 @@ export class World {
         this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 1, 20000);
         this.camera.position.set(0, 30, 100);
 
-        // Fog
-        this.scene.fog = new THREE.FogExp2(0x5ca5c9, 0.0015); // Blue-ish atmospheric fog
+        // Fog - slight tweak for depth
+        this.scene.fog = new THREE.FogExp2(0x5ca5c9, 0.0025); 
 
         // Components
         this.sky = new SkySystem(this.scene, this.renderer);
         const sunPos = this.sky.updateSky();
 
         // Lighting
-        const sunLight = new THREE.DirectionalLight(0xfffaed, 2.5);
+        const sunLight = new THREE.DirectionalLight(0xfffaed, 3.0); // Brighter sun
         sunLight.position.copy(sunPos);
         sunLight.castShadow = true;
         
         // Shadow optimization
-        sunLight.shadow.mapSize.width = 2048;
-        sunLight.shadow.mapSize.height = 2048;
-        const d = 300;
+        sunLight.shadow.mapSize.width = 4096; // Higher res shadows
+        sunLight.shadow.mapSize.height = 4096;
+        const d = 400;
         sunLight.shadow.camera.left = -d;
         sunLight.shadow.camera.right = d;
         sunLight.shadow.camera.top = d;
         sunLight.shadow.camera.bottom = -d;
-        sunLight.shadow.bias = -0.0001;
+        sunLight.shadow.bias = -0.00005;
+        sunLight.shadow.normalBias = 0.05; // Helps with acne on terrain
         
         this.scene.add(sunLight);
 
-        const ambientLight = new THREE.AmbientLight(0x404040, 0.5); // Soft ambient
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.6); 
         this.scene.add(ambientLight);
 
         // Load Async Components
@@ -85,6 +96,10 @@ export class World {
 
         this.trees = new Trees(this.scene, terrainMesh);
         this.trees.generate();
+        
+        // Atmosphere particles
+        this.atmosphere = new Atmosphere(this.scene);
+        this.atmosphere.create();
 
         // Player & Camera Setup
         this.player = new Player(this.scene);
@@ -96,8 +111,32 @@ export class World {
         this.cameraController = new CameraController(this.camera, this.canvas);
         this.cameraController.setTarget(this.player.mesh);
 
+        // Setup Post-Processing
+        this.setupPostProcessing();
+
         // Handle window resize
         window.addEventListener('resize', () => this.onResize());
+    }
+
+    setupPostProcessing() {
+        this.composer = new EffectComposer(this.renderer);
+        
+        const renderPass = new RenderPass(this.scene, this.camera);
+        this.composer.addPass(renderPass);
+
+        // Bloom for AAA glow
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            1.5, 0.4, 0.85
+        );
+        bloomPass.threshold = 0.6; // Only very bright things glow
+        bloomPass.strength = 0.4;
+        bloomPass.radius = 0.5;
+        this.composer.addPass(bloomPass);
+
+        // Color correction / Tone mapping handles in renderer, OutputPass ensures correct color space
+        const outputPass = new OutputPass();
+        this.composer.addPass(outputPass);
     }
 
     start() {
@@ -125,25 +164,36 @@ export class World {
         const time = this.clock.getElapsedTime();
 
         if (this.water) this.water.update(time);
+        if (this.atmosphere) this.atmosphere.update(time);
 
         if (this.player && this.cameraController) {
             // Get camera yaw to direct player
             const camYaw = this.cameraController.getYaw();
             
-            // Pass terrain height lookup function so player can check height AFTER moving for frame-perfect collision
+            // Pass terrain height lookup function so player can check height
             this.player.update(delta, (x, z) => this.getTerrainHeight(x, z), camYaw);
-            this.cameraController.update();
+            
+            // Update camera with terrain mesh for collision
+            this.cameraController.update(this.terrain.getMesh());
         }
     }
 
     render() {
-        this.renderer.render(this.scene, this.camera);
+        // Use composer instead of raw renderer
+        if (this.composer) {
+            this.composer.render();
+        } else {
+            this.renderer.render(this.scene, this.camera);
+        }
     }
 
     onResize() {
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
+        if (this.composer) {
+            this.composer.setSize(window.innerWidth, window.innerHeight);
+        }
     }
 
     enableAudio() {
