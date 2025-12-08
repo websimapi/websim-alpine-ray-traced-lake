@@ -38,6 +38,7 @@ export class Player {
 
     createStickFigure() {
         const group = new THREE.Group();
+        group.rotation.order = 'YXZ'; // Important for proper swimming rotation (Yaw then Pitch)
         group.castShadow = true;
 
         const mat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.7 });
@@ -110,6 +111,8 @@ export class Player {
         const isSwimming = isDeepWater;
 
         // Vertical Movement logic
+        const isMoving = moveDir.length() > 0.1;
+
         if (isSwimming) {
             // Swim logic
             // Target is water surface
@@ -119,7 +122,9 @@ export class Player {
             this.position.y = THREE.MathUtils.lerp(this.position.y, targetY, 5 * dt);
 
             // Swim Rotation (horizontal)
-            this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, Math.PI / 2.5, 5 * dt);
+            // If moving, lay flat. If idle, tread water (angle up slightly)
+            const swimAngle = isMoving ? Math.PI / 2.2 : Math.PI / 4;
+            this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, swimAngle, 5 * dt);
 
         } else {
             // Walk logic
@@ -143,40 +148,63 @@ export class Player {
         this.mesh.rotation.y = this.rotation;
 
         // Procedural Animation
-        this.animateLimbs(dt, moveDir.length() > 0.1, isSwimming);
+        this.animateLimbs(dt, isMoving, isSwimming);
     }
 
     animateLimbs(dt, isMoving, isSwimming) {
-        if (isMoving || isSwimming) {
-            this.animTime += dt * (isSwimming ? 6 : 12);
+        if (isSwimming) {
+            // Water Animations
+            if (isMoving) {
+                // Active Swimming (Breaststroke)
+                this.animTime += dt * 8;
+                const armPhase = Math.sin(this.animTime);
+                
+                // Arms sweeping
+                this.leftArm.rotation.z = Math.abs(armPhase) * 1.5 - 0.2;
+                this.rightArm.rotation.z = -(Math.abs(armPhase) * 1.5 - 0.2);
+                this.leftArm.rotation.x = Math.cos(this.animTime) * 1.2;
+                this.rightArm.rotation.x = Math.cos(this.animTime) * 1.2;
 
-            if (isSwimming) {
-                 // Swimming Animation (Breaststroke-ish)
-                 const armPhase = Math.sin(this.animTime);
-                 this.leftArm.rotation.z = Math.abs(armPhase) * 1.5 - 0.5;
-                 this.rightArm.rotation.z = -(Math.abs(armPhase) * 1.5 - 0.5);
-                 this.leftArm.rotation.x = Math.cos(this.animTime) * 1.0;
-                 this.rightArm.rotation.x = Math.cos(this.animTime) * 1.0;
-
-                 // Legs kicking
-                 this.leftLeg.rotation.x = Math.sin(this.animTime * 1.5) * 0.5;
-                 this.rightLeg.rotation.x = Math.sin(this.animTime * 1.5 + Math.PI) * 0.5;
-
+                // Legs kicking flutter
+                this.leftLeg.rotation.x = Math.sin(this.animTime * 1.5) * 0.4;
+                this.rightLeg.rotation.x = Math.sin(this.animTime * 1.5 + Math.PI) * 0.4;
             } else {
-                // Walking Animation
-                this.leftLeg.rotation.x = Math.sin(this.animTime) * 0.8;
-                this.rightLeg.rotation.x = Math.sin(this.animTime + Math.PI) * 0.8;
+                // Idle / Treading Water (Floating)
+                this.animTime += dt * 3;
+                
+                // Arms sculling gently
+                this.leftArm.rotation.z = 0.5 + Math.sin(this.animTime) * 0.2;
+                this.rightArm.rotation.z = -0.5 - Math.sin(this.animTime) * 0.2;
+                this.leftArm.rotation.x = 0.2 + Math.cos(this.animTime * 0.8) * 0.2;
+                this.rightArm.rotation.x = 0.2 + Math.cos(this.animTime * 0.8 + Math.PI) * 0.2;
 
-                this.leftArm.rotation.x = Math.sin(this.animTime + Math.PI) * 0.6;
-                this.rightArm.rotation.x = Math.sin(this.animTime) * 0.6;
-                this.leftArm.rotation.z = 0.1;
-                this.rightArm.rotation.z = -0.1;
+                // Legs treading (eggbeater/frog kick slow)
+                this.leftLeg.rotation.x = 0.2 + Math.sin(this.animTime) * 0.3;
+                this.rightLeg.rotation.x = 0.2 + Math.sin(this.animTime + Math.PI) * 0.3;
+                this.leftLeg.rotation.z = 0.2;
+                this.rightLeg.rotation.z = -0.2;
             }
+        } else if (isMoving) {
+            // Walking Animation
+            this.animTime += dt * 12;
+            
+            this.leftLeg.rotation.x = Math.sin(this.animTime) * 0.8;
+            this.rightLeg.rotation.x = Math.sin(this.animTime + Math.PI) * 0.8;
+            this.leftLeg.rotation.z = 0;
+            this.rightLeg.rotation.z = 0;
+
+            this.leftArm.rotation.x = Math.sin(this.animTime + Math.PI) * 0.6;
+            this.rightArm.rotation.x = Math.sin(this.animTime) * 0.6;
+            this.leftArm.rotation.z = 0.1;
+            this.rightArm.rotation.z = -0.1;
         } else {
-            // Idle Pose
+            // Standing Idle
             const idleSpeed = 2 * dt;
             this.leftLeg.rotation.x = THREE.MathUtils.lerp(this.leftLeg.rotation.x, 0, idleSpeed);
             this.rightLeg.rotation.x = THREE.MathUtils.lerp(this.rightLeg.rotation.x, 0, idleSpeed);
+            this.leftLeg.rotation.z = THREE.MathUtils.lerp(this.leftLeg.rotation.z, 0, idleSpeed);
+            this.rightLeg.rotation.z = THREE.MathUtils.lerp(this.rightLeg.rotation.z, 0, idleSpeed);
+            
             this.leftArm.rotation.x = THREE.MathUtils.lerp(this.leftArm.rotation.x, 0, idleSpeed);
             this.rightArm.rotation.x = THREE.MathUtils.lerp(this.rightArm.rotation.x, 0, idleSpeed);
             this.leftArm.rotation.z = THREE.MathUtils.lerp(this.leftArm.rotation.z, 0.1, idleSpeed);
