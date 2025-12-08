@@ -223,13 +223,15 @@ export class Player {
                 // Left Arm
                 const armLPhase = this.animTime;
                 this.armL.root.rotation.x = Math.sin(armLPhase) * 2.5; // Big swing
-                this.armL.root.rotation.z = Math.abs(Math.sin(armLPhase)) * 0.5 + 0.2; // Move out slightly
+                // Tilt slightly away from body
+                this.armL.root.rotation.z = -(Math.abs(Math.sin(armLPhase)) * 0.5 + 0.2);
                 this.armL.joint.rotation.x = -Math.max(0, Math.cos(armLPhase)) * 1.5; // Bend elbow on return
 
                 // Right Arm (Opposite phase)
                 const armRPhase = this.animTime + Math.PI;
                 this.armR.root.rotation.x = Math.sin(armRPhase) * 2.5;
-                this.armR.root.rotation.z = -(Math.abs(Math.sin(armRPhase)) * 0.5 + 0.2);
+                // Tilt slightly away from body (mirrored)
+                this.armR.root.rotation.z = (Math.abs(Math.sin(armRPhase)) * 0.5 + 0.2);
                 this.armR.joint.rotation.x = -Math.max(0, Math.cos(armRPhase)) * 1.5;
 
                 // Legs: Flutter Kick (Quick, small amplitude)
