@@ -78,6 +78,8 @@ export class Terrain {
         }
 
         this.geometry.computeVertexNormals();
+        this.geometry.computeBoundingBox();
+        this.geometry.computeBoundingSphere();
 
         // Custom Shader Material setup for texture splatting based on slope/height
         // We hook into MeshStandardMaterial to keep lighting/shadows support

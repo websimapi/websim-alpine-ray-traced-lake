@@ -117,7 +117,7 @@ export class World {
         if (intersects.length > 0) {
             return intersects[0].point.y;
         }
-        return 0;
+        return -100; // Fall into "water" if off-map
     }
 
     update() {

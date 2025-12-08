@@ -16,6 +16,7 @@ export class Player {
         this.animTime = 0;
 
         this.waterLevel = -2;
+        this.heightOffset = 0.2; // Offset to keep feet on ground
 
         this.initInput();
     }
@@ -118,7 +119,7 @@ export class Player {
         } else {
             // Walk logic
             // Snap to terrain
-            this.position.y = terrainHeight;
+            this.position.y = terrainHeight + this.heightOffset;
 
             // Upright
             this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, 0, 10 * dt);
