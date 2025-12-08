@@ -6,7 +6,7 @@ export class Player {
         this.position = new THREE.Vector3(0, 100, 0); 
         this.rotation = 0;
 
-        this.keys = { w: false, a: false, s: false, d: false, space: false };
+        this.keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
 
         this.mesh = this.createStickFigure();
         this.scene.add(this.mesh);
@@ -34,6 +34,7 @@ export class Player {
         if (key === 'keys' || key === 'arrowdown') this.keys.s = pressed;
         if (key === 'keyd' || key === 'arrowright') this.keys.d = pressed;
         if (key === 'space') this.keys.space = pressed;
+        if (key === 'shiftleft' || key === 'shiftright') this.keys.shift = pressed;
     }
 
     createStickFigure() {
@@ -88,7 +89,7 @@ export class Player {
         const upperArmLen = 0.55;
         const lowerArmLen = 0.55;
         const shoulderY = 1.6;
-        const shoulderX = 0.45;
+        const shoulderX = 0.35;
 
         // Left Arm
         this.shoulderL = createJoint(-shoulderX, shoulderY, 0);
@@ -125,10 +126,6 @@ export class Player {
         this.armL = buildLimb(new THREE.Vector3(-shoulderX, shoulderY, 0), upperArmLen, lowerArmLen, armWidth);
         this.armR = buildLimb(new THREE.Vector3(shoulderX, shoulderY, 0), upperArmLen, lowerArmLen, armWidth);
         
-        // Stronger inward tilt at the shoulder so the bicep tucks in toward the torso
-        this.armL.upperMesh.rotation.z = 0.25;
-        this.armR.upperMesh.rotation.z = -0.25;
-        
         this.bodyGroup.add(this.armL.root);
         this.bodyGroup.add(this.armR.root);
 
@@ -148,66 +145,126 @@ export class Player {
         return group;
     }
 
-    update(dt, getTerrainHeight, cameraAngleY) {
-        // Calculate Movement Direction based on Camera Yaw
-        const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraAngleY);
-        const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraAngleY);
-
-        const moveDir = new THREE.Vector3();
-        if (this.keys.w) moveDir.add(forward);
-        if (this.keys.s) moveDir.sub(forward);
-        if (this.keys.d) moveDir.add(right);
-        if (this.keys.a) moveDir.sub(right);
-
-        if (moveDir.length() > 0) moveDir.normalize();
-
-        const currentIsSwimming = this.position.y < (this.waterLevel - 0.5);
-        const speed = currentIsSwimming ? this.swimSpeed : this.walkSpeed;
-
-        this.position.x += moveDir.x * speed * dt;
-        this.position.z += moveDir.z * speed * dt;
-
+    update(dt, getTerrainHeight, camera) {
+        // State Check
         const terrainHeight = getTerrainHeight(this.position.x, this.position.z);
-        const isDeepWater = terrainHeight < (this.waterLevel - 1.5);
-        const isSwimming = isDeepWater;
+        const waterHeight = this.waterLevel;
+        
+        // Determine if we are in swimming depth (and submerged enough)
+        const depth = waterHeight - terrainHeight;
+        const isDeepWater = depth > 1.5;
+        const isSubmerged = this.position.y < (waterHeight - 0.5);
+        
+        // Mode switch hysteresis or simple check?
+        const isSwimming = isDeepWater && (this.position.y < waterHeight + 0.5);
+        
+        const speed = isSwimming ? this.swimSpeed : this.walkSpeed;
+        const moveDir = new THREE.Vector3();
 
-        const isMoving = moveDir.length() > 0.1;
-
+        // --- Movement Logic ---
         if (isSwimming) {
-            // Target is water surface
-            let targetY = this.waterLevel - 0.7; // Lower center of mass for swimming
-            this.position.y = THREE.MathUtils.lerp(this.position.y, targetY, 5 * dt);
+            // 3D Underwater Movement (Orientation based)
+            // Get camera forward direction
+            const camForward = new THREE.Vector3();
+            camera.getWorldDirection(camForward);
+            
+            // Use local camera Right vector to avoid gimbal lock and inversion when looking down
+            const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
 
-            // Rotate entire body group for swimming
-            // 90 degrees forward so body is horizontal
-            const targetTilt = isMoving ? Math.PI / 2 : Math.PI / 2.5; 
-            this.bodyGroup.rotation.x = THREE.MathUtils.lerp(this.bodyGroup.rotation.x, targetTilt, 5 * dt);
+            if (this.keys.w) moveDir.add(camForward);
+            if (this.keys.s) moveDir.sub(camForward);
+            if (this.keys.d) moveDir.add(camRight);
+            if (this.keys.a) moveDir.sub(camRight);
 
-            // Floating bob
-            this.bodyGroup.position.y = Math.sin(Date.now() * 0.002) * 0.1;
+            // Vertical strafe
+            if (this.keys.space) moveDir.y += 0.8; // Swim Up
+            if (this.keys.shift) moveDir.y -= 0.8; // Swim Down
 
+            if (moveDir.length() > 0) moveDir.normalize();
+
+            // Apply movement
+            this.position.addScaledVector(moveDir, speed * dt);
+            
+            // Clamp height (Don't fly out of water like Superman)
+            if (this.position.y > waterHeight - 0.2 && !this.keys.space) {
+                this.position.y = waterHeight - 0.2;
+            }
+            // Prevent going below terrain
+            if (this.position.y < terrainHeight + 1.0) {
+                this.position.y = terrainHeight + 1.0;
+            }
+            
+            // --- Rotation Logic for Swimming ---
+            // 1. Yaw (Player Rotation) - Face horizontal movement direction
+            const flatDir = new THREE.Vector2(moveDir.x, moveDir.z);
+            if (flatDir.length() > 0.1) {
+                const targetRotation = Math.atan2(moveDir.x, moveDir.z);
+                let rotDiff = targetRotation - this.rotation;
+                while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+                while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+                this.rotation += rotDiff * 5 * dt;
+            }
+
+            // 2. Pitch (Body Tilt) - Dive up/down
+            // Calculate pitch from moveDir.y
+            // Base swimming is 90 degrees (Math.PI / 2)
+            let targetPitch = Math.PI / 2; 
+            
+            if (moveDir.length() > 0.1) {
+                // If moving down (y < 0), pitch should increase (head down)
+                // If moving up (y > 0), pitch should decrease (head up)
+                targetPitch -= moveDir.y * 1.0; 
+            } else {
+                 targetPitch = Math.PI / 2.5; // Idle float
+            }
+            
+            this.bodyGroup.rotation.x = THREE.MathUtils.lerp(this.bodyGroup.rotation.x, targetPitch, 5 * dt);
+            
         } else {
-            // Walking
+            // Standard Ground Movement
+            const camAngleY = Math.atan2(
+                camera.position.x - this.position.x, 
+                camera.position.z - this.position.z
+            ) + Math.PI; // Face away from camera effectively, or use controller yaw
+            
+            // Actually, better to use the camera's pure yaw
+            const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+            const yaw = euler.y;
+
+            const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+            const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+
+            if (this.keys.w) moveDir.add(forward);
+            if (this.keys.s) moveDir.sub(forward);
+            if (this.keys.d) moveDir.add(right);
+            if (this.keys.a) moveDir.sub(right);
+
+            if (moveDir.length() > 0) moveDir.normalize();
+
+            this.position.x += moveDir.x * speed * dt;
+            this.position.z += moveDir.z * speed * dt;
+
+            // Snap to ground
             this.position.y = terrainHeight + this.heightOffset;
             
             // Reset rotation
             this.bodyGroup.rotation.x = THREE.MathUtils.lerp(this.bodyGroup.rotation.x, 0, 10 * dt);
             this.bodyGroup.position.y = 0;
-        }
-
-        // Face direction
-        if (moveDir.length() > 0.1) {
-            const targetRotation = Math.atan2(moveDir.x, moveDir.z);
-            let rotDiff = targetRotation - this.rotation;
-            while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
-            while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
-            this.rotation += rotDiff * 10 * dt;
+            
+            // Face direction
+            if (moveDir.length() > 0.1) {
+                const targetRotation = Math.atan2(moveDir.x, moveDir.z);
+                let rotDiff = targetRotation - this.rotation;
+                while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+                while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+                this.rotation += rotDiff * 10 * dt;
+            }
         }
 
         this.mesh.position.copy(this.position);
         this.mesh.rotation.y = this.rotation;
 
-        this.animateLimbs(dt, isMoving, isSwimming);
+        this.animateLimbs(dt, moveDir.length() > 0.1, isSwimming);
     }
 
     animateLimbs(dt, isMoving, isSwimming) {
@@ -227,15 +284,13 @@ export class Player {
                 // Left Arm
                 const armLPhase = this.animTime;
                 this.armL.root.rotation.x = Math.sin(armLPhase) * 2.5; // Big swing
-                // Tilt in toward body through the stroke
-                this.armL.root.rotation.z = (Math.abs(Math.sin(armLPhase)) * 0.5 + 0.35);
+                this.armL.root.rotation.z = Math.abs(Math.sin(armLPhase)) * 0.5 + 0.2; // Move out slightly
                 this.armL.joint.rotation.x = -Math.max(0, Math.cos(armLPhase)) * 1.5; // Bend elbow on return
 
                 // Right Arm (Opposite phase)
                 const armRPhase = this.animTime + Math.PI;
                 this.armR.root.rotation.x = Math.sin(armRPhase) * 2.5;
-                // Tilt in toward body (mirrored)
-                this.armR.root.rotation.z = -(Math.abs(Math.sin(armRPhase)) * 0.5 + 0.35);
+                this.armR.root.rotation.z = -(Math.abs(Math.sin(armRPhase)) * 0.5 + 0.2);
                 this.armR.joint.rotation.x = -Math.max(0, Math.cos(armRPhase)) * 1.5;
 
                 // Legs: Flutter Kick (Quick, small amplitude)
@@ -250,13 +305,13 @@ export class Player {
                 // Treading Water (Vertical-ish)
                 this.animTime += dt * 3;
 
-                // Arms sculling, tilted in toward body
+                // Arms sculling
                 this.armL.root.rotation.x = 0.5; // Forward
-                this.armL.root.rotation.z = 0.8 + Math.sin(this.animTime) * 0.35;
+                this.armL.root.rotation.z = 0.5 + Math.sin(this.animTime) * 0.3;
                 this.armL.joint.rotation.x = -0.5; // Forearms angled
 
                 this.armR.root.rotation.x = 0.5;
-                this.armR.root.rotation.z = -0.8 - Math.sin(this.animTime) * 0.35;
+                this.armR.root.rotation.z = -0.5 - Math.sin(this.animTime) * 0.3;
                 this.armR.joint.rotation.x = -0.5;
 
                 // Legs eggbeater (cycling)
@@ -272,13 +327,13 @@ export class Player {
             // Walking
             this.animTime += dt * 10;
 
-            // Arms (Opposite to legs), tilted inward toward torso
+            // Arms (Opposite to legs)
             this.armL.root.rotation.x = Math.cos(this.animTime) * 0.6;
-            this.armL.root.rotation.z = 0.25;
+            this.armL.root.rotation.z = 0.1;
             this.armL.joint.rotation.x = -0.4 - Math.sin(this.animTime) * 0.2; // Slight elbow bend
 
             this.armR.root.rotation.x = Math.cos(this.animTime + Math.PI) * 0.6;
-            this.armR.root.rotation.z = -0.25;
+            this.armR.root.rotation.z = -0.1;
             this.armR.joint.rotation.x = -0.4 - Math.sin(this.animTime + Math.PI) * 0.2;
 
             // Legs
@@ -301,9 +356,8 @@ export class Player {
         } else {
             // Idle
             const s = Math.sin(Date.now() * 0.003);
-            // Arms hang in with a slight inward tilt and subtle sway
-            this.armL.root.rotation.z = 0.25 + s * 0.02;
-            this.armR.root.rotation.z = -0.25 - s * 0.02;
+            this.armL.root.rotation.z = 0.1 + s * 0.02;
+            this.armR.root.rotation.z = -0.1 - s * 0.02;
             this.armL.root.rotation.x = 0;
             this.armR.root.rotation.x = 0;
             

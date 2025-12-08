@@ -11,6 +11,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
 export class World {
     constructor(canvas) {
@@ -54,11 +55,13 @@ export class World {
         this.scene = new THREE.Scene();
         
         // Camera
-        this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 1, 20000);
+        this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 20000);
         this.camera.position.set(0, 30, 100);
 
-        // Fog - slight tweak for depth
-        this.scene.fog = new THREE.FogExp2(0x5ca5c9, 0.0025); 
+        // Fog
+        this.defaultFogColor = 0x5ca5c9;
+        this.underwaterFogColor = 0x001e0f;
+        this.scene.fog = new THREE.FogExp2(this.defaultFogColor, 0.0025); 
 
         // Components
         this.sky = new SkySystem(this.scene, this.renderer);
@@ -124,6 +127,61 @@ export class World {
         const renderPass = new RenderPass(this.scene, this.camera);
         this.composer.addPass(renderPass);
 
+        // Underwater Distortion Pass
+        const UnderwaterShader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                time: { value: 0 },
+                enabled: { value: 0.0 }, // 0 = off, 1 = on
+                color: { value: new THREE.Color(0x001e0f) }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform float time;
+                uniform float enabled;
+                uniform vec3 color;
+                varying vec2 vUv;
+                
+                void main() {
+                    vec2 uv = vUv;
+                    
+                    if (enabled > 0.5) {
+                        // Wobble
+                        uv.x += sin(uv.y * 15.0 + time) * 0.003;
+                        uv.y += cos(uv.x * 12.0 + time * 1.5) * 0.003;
+                        
+                        // Chromatic aberration (simple shift)
+                        float r = texture2D(tDiffuse, uv + vec2(0.002, 0.0)).r;
+                        float g = texture2D(tDiffuse, uv).g;
+                        float b = texture2D(tDiffuse, uv - vec2(0.002, 0.0)).b;
+                        vec3 tex = vec3(r, g, b);
+                        
+                        // Blue tint
+                        vec3 tint = color * 1.5;
+                        vec3 final = mix(tex, tint, 0.6);
+                        
+                        // Vignette
+                        float dist = distance(vUv, vec2(0.5));
+                        float vignette = smoothstep(0.8, 0.2, dist);
+                        
+                        gl_FragColor = vec4(final * vignette, 1.0);
+                    } else {
+                        gl_FragColor = texture2D(tDiffuse, uv);
+                    }
+                }
+            `
+        };
+
+        this.underwaterPass = new ShaderPass(UnderwaterShader);
+        this.composer.addPass(this.underwaterPass);
+
         // Bloom for AAA glow
         const bloomPass = new UnrealBloomPass(
             new THREE.Vector2(window.innerWidth, window.innerHeight),
@@ -134,7 +192,7 @@ export class World {
         bloomPass.radius = 0.5;
         this.composer.addPass(bloomPass);
 
-        // Color correction / Tone mapping handles in renderer, OutputPass ensures correct color space
+        // Color correction
         const outputPass = new OutputPass();
         this.composer.addPass(outputPass);
     }
@@ -163,15 +221,32 @@ export class World {
         const delta = this.clock.getDelta();
         const time = this.clock.getElapsedTime();
 
+        // 1. Check Underwater State
+        const waterLevel = -2; // Hardcoded in Water.js, should match
+        const isUnderwater = this.camera.position.y < waterLevel;
+
+        // 2. Update Post-Processing & Fog
+        if (isUnderwater) {
+            this.scene.fog.density = 0.05; // Dense fog
+            this.scene.fog.color.setHex(this.underwaterFogColor);
+            if (this.underwaterPass) {
+                this.underwaterPass.uniforms.enabled.value = 1.0;
+                this.underwaterPass.uniforms.time.value = time;
+            }
+        } else {
+            this.scene.fog.density = 0.0025;
+            this.scene.fog.color.setHex(this.defaultFogColor);
+            if (this.underwaterPass) {
+                this.underwaterPass.uniforms.enabled.value = 0.0;
+            }
+        }
+
         if (this.water) this.water.update(time);
         if (this.atmosphere) this.atmosphere.update(time);
 
         if (this.player && this.cameraController) {
-            // Get camera yaw to direct player
-            const camYaw = this.cameraController.getYaw();
-            
             // Pass terrain height lookup function so player can check height
-            this.player.update(delta, (x, z) => this.getTerrainHeight(x, z), camYaw);
+            this.player.update(delta, (x, z) => this.getTerrainHeight(x, z), this.camera);
             
             // Update camera with terrain mesh for collision
             this.cameraController.update(this.terrain.getMesh());
