@@ -38,41 +38,108 @@ export class Player {
 
     createStickFigure() {
         const group = new THREE.Group();
-        group.rotation.order = 'YXZ'; // Important for proper swimming rotation (Yaw then Pitch)
+        group.rotation.order = 'YXZ'; 
         group.castShadow = true;
 
-        const mat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.7 });
-        const skinMat = new THREE.MeshStandardMaterial({ color: 0xffaa00, roughness: 0.5 }); // Stick figure "skin" if needed, keeping it dark/neutral for "stick" look
+        const mat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6 });
+        const jointMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.5 }); 
 
-        // Torso
-        this.torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 1.0, 4, 8), mat);
-        this.torso.position.y = 1.2;
+        // 1. Container for body parts that can be tilted independently of the root Y-axis rotation
+        this.bodyGroup = new THREE.Group();
+        group.add(this.bodyGroup);
+
+        // --- Torso ---
+        // Slight taper for better shape
+        const torsoGeo = new THREE.CapsuleGeometry(0.22, 0.7, 4, 8);
+        this.torso = new THREE.Mesh(torsoGeo, mat);
+        this.torso.position.y = 1.35;
         this.torso.castShadow = true;
-        group.add(this.torso);
+        this.bodyGroup.add(this.torso);
 
-        // Head
-        this.head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 16), mat);
-        this.head.position.y = 2.0;
+        // --- Head ---
+        this.head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 16, 16), mat);
+        this.head.position.y = 1.95;
         this.head.castShadow = true;
-        group.add(this.head);
+        this.bodyGroup.add(this.head);
 
-        // Limbs factory
-        const createLimb = (x, y, isLeg) => {
-            const pivot = new THREE.Group();
-            pivot.position.set(x, y, 0);
-            const geo = new THREE.CapsuleGeometry(0.1, isLeg ? 0.9 : 0.8, 4, 8);
-            const mesh = new THREE.Mesh(geo, mat);
-            mesh.position.y = isLeg ? -0.45 : -0.4;
+        // --- Joint/Limb Factory ---
+        const createSegment = (length, width = 0.11) => {
+            const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(width, length, 4, 8), mat);
+            // Center of capsule is (0,0,0), so we move it down by half length to rotate from top
+            mesh.position.y = -length / 2; 
             mesh.castShadow = true;
-            pivot.add(mesh);
-            group.add(pivot);
-            return pivot;
+            return mesh;
         };
 
-        this.leftArm = createLimb(-0.4, 1.8, false);
-        this.rightArm = createLimb(0.4, 1.8, false);
-        this.leftLeg = createLimb(-0.2, 0.8, true);
-        this.rightLeg = createLimb(0.2, 0.8, true);
+        const createJoint = (x, y, z) => {
+            const joint = new THREE.Group();
+            joint.position.set(x, y, z);
+            
+            // Visual joint sphere
+            const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), jointMat);
+            sphere.castShadow = true;
+            joint.add(sphere);
+            
+            return joint;
+        };
+
+        // --- Arms ---
+        const armWidth = 0.09;
+        const upperArmLen = 0.55;
+        const lowerArmLen = 0.55;
+        const shoulderY = 1.6;
+        const shoulderX = 0.35;
+
+        // Left Arm
+        this.shoulderL = createJoint(-shoulderX, shoulderY, 0);
+        this.upperArmL = createSegment(upperArmLen, armWidth);
+        this.shoulderL.add(this.upperArmL);
+        
+        this.elbowL = createJoint(0, -upperArmLen, 0);
+        this.upperArmL.add(this.elbowL); // Attach elbow to end of upper arm mesh? No, grouping is better.
+        // Actually, upperArmL mesh is offset y. So (0, -len, 0) relative to shoulder is the elbow spot.
+        // We need to structure it: Shoulder -> UpperArmGroup -> Elbow -> LowerArmGroup
+        
+        // Re-doing factory for hierarchy
+        const buildLimb = (origin, upperLen, lowerLen, width) => {
+            const root = new THREE.Group();
+            root.position.copy(origin);
+
+            const upperMesh = createSegment(upperLen, width);
+            root.add(upperMesh);
+
+            const joint = new THREE.Group();
+            joint.position.y = -upperLen; // At end of upper
+            root.add(joint);
+
+            // Visual elbow/knee
+            const jointSphere = new THREE.Mesh(new THREE.SphereGeometry(width * 1.2, 8, 8), jointMat);
+            joint.add(jointSphere);
+
+            const lowerMesh = createSegment(lowerLen, width * 0.9);
+            joint.add(lowerMesh);
+            
+            return { root, joint, upperMesh, lowerMesh };
+        };
+
+        this.armL = buildLimb(new THREE.Vector3(-shoulderX, shoulderY, 0), upperArmLen, lowerArmLen, armWidth);
+        this.armR = buildLimb(new THREE.Vector3(shoulderX, shoulderY, 0), upperArmLen, lowerArmLen, armWidth);
+        
+        this.bodyGroup.add(this.armL.root);
+        this.bodyGroup.add(this.armR.root);
+
+        // --- Legs ---
+        const legWidth = 0.12;
+        const upperLegLen = 0.65;
+        const lowerLegLen = 0.65;
+        const hipY = 1.0;
+        const hipX = 0.2;
+
+        this.legL = buildLimb(new THREE.Vector3(-hipX, hipY, 0), upperLegLen, lowerLegLen, legWidth);
+        this.legR = buildLimb(new THREE.Vector3(hipX, hipY, 0), upperLegLen, lowerLegLen, legWidth);
+
+        this.bodyGroup.add(this.legL.root);
+        this.bodyGroup.add(this.legR.root);
 
         return group;
     }
@@ -90,52 +157,41 @@ export class Player {
 
         if (moveDir.length() > 0) moveDir.normalize();
 
-        // Determine potential speed
-        // We don't know if we are swimming yet until we check height at new position, 
-        // but for velocity calculation let's assume current state or average.
-        // Actually, we can just use walk speed for movement calc and damp it if needed.
-        // Or check current y.
-        const currentIsSwimming = this.position.y < this.waterLevel;
+        const currentIsSwimming = this.position.y < (this.waterLevel - 0.5);
         const speed = currentIsSwimming ? this.swimSpeed : this.walkSpeed;
 
-        // Update Position X/Z
         this.position.x += moveDir.x * speed * dt;
         this.position.z += moveDir.z * speed * dt;
 
-        // Get Terrain Height at NEW position
         const terrainHeight = getTerrainHeight(this.position.x, this.position.z);
-        
-        // Determine Swimming State based on terrain depth
-        // If terrain is significantly below water level, we are in deep water
         const isDeepWater = terrainHeight < (this.waterLevel - 1.5);
         const isSwimming = isDeepWater;
 
-        // Vertical Movement logic
         const isMoving = moveDir.length() > 0.1;
 
         if (isSwimming) {
-            // Swim logic
             // Target is water surface
-            let targetY = this.waterLevel - 0.5; 
-            
-            // Smoothly move Y to water level
+            let targetY = this.waterLevel - 0.7; // Lower center of mass for swimming
             this.position.y = THREE.MathUtils.lerp(this.position.y, targetY, 5 * dt);
 
-            // Swim Rotation (horizontal)
-            // If moving, lay flat. If idle, tread water (angle up slightly)
-            const swimAngle = isMoving ? Math.PI / 2.2 : Math.PI / 4;
-            this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, swimAngle, 5 * dt);
+            // Rotate entire body group for swimming
+            // 90 degrees forward so body is horizontal
+            const targetTilt = isMoving ? Math.PI / 2 : Math.PI / 2.5; 
+            this.bodyGroup.rotation.x = THREE.MathUtils.lerp(this.bodyGroup.rotation.x, targetTilt, 5 * dt);
+
+            // Floating bob
+            this.bodyGroup.position.y = Math.sin(Date.now() * 0.002) * 0.1;
 
         } else {
-            // Walk logic
-            // Snap to terrain immediately to prevent clipping
+            // Walking
             this.position.y = terrainHeight + this.heightOffset;
-
-            // Upright
-            this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, 0, 10 * dt);
+            
+            // Reset rotation
+            this.bodyGroup.rotation.x = THREE.MathUtils.lerp(this.bodyGroup.rotation.x, 0, 10 * dt);
+            this.bodyGroup.position.y = 0;
         }
 
-        // Rotation (face movement direction smoothly)
+        // Face direction
         if (moveDir.length() > 0.1) {
             const targetRotation = Math.atan2(moveDir.x, moveDir.z);
             let rotDiff = targetRotation - this.rotation;
@@ -147,72 +203,110 @@ export class Player {
         this.mesh.position.copy(this.position);
         this.mesh.rotation.y = this.rotation;
 
-        // Procedural Animation
         this.animateLimbs(dt, isMoving, isSwimming);
     }
 
     animateLimbs(dt, isMoving, isSwimming) {
+        // Reset all joints
+        // Helper to reset
+        const reset = (limb) => {
+            limb.root.rotation.set(0,0,0);
+            limb.joint.rotation.set(0,0,0);
+        }
+
         if (isSwimming) {
-            // Water Animations
             if (isMoving) {
-                // Active Swimming (Breaststroke)
-                this.animTime += dt * 8;
-                const armPhase = Math.sin(this.animTime);
+                // Freestyle / Flutter kick
+                this.animTime += dt * 10;
                 
-                // Arms sweeping
-                this.leftArm.rotation.z = Math.abs(armPhase) * 1.5 - 0.2;
-                this.rightArm.rotation.z = -(Math.abs(armPhase) * 1.5 - 0.2);
-                this.leftArm.rotation.x = Math.cos(this.animTime) * 1.2;
-                this.rightArm.rotation.x = Math.cos(this.animTime) * 1.2;
+                // Arms: Windmill / Crawl
+                // Left Arm
+                const armLPhase = this.animTime;
+                this.armL.root.rotation.x = Math.sin(armLPhase) * 2.5; // Big swing
+                this.armL.root.rotation.z = Math.abs(Math.sin(armLPhase)) * 0.5 + 0.2; // Move out slightly
+                this.armL.joint.rotation.x = -Math.max(0, Math.cos(armLPhase)) * 1.5; // Bend elbow on return
 
-                // Legs kicking flutter
-                this.leftLeg.rotation.x = Math.sin(this.animTime * 1.5) * 0.4;
-                this.rightLeg.rotation.x = Math.sin(this.animTime * 1.5 + Math.PI) * 0.4;
+                // Right Arm (Opposite phase)
+                const armRPhase = this.animTime + Math.PI;
+                this.armR.root.rotation.x = Math.sin(armRPhase) * 2.5;
+                this.armR.root.rotation.z = -(Math.abs(Math.sin(armRPhase)) * 0.5 + 0.2);
+                this.armR.joint.rotation.x = -Math.max(0, Math.cos(armRPhase)) * 1.5;
+
+                // Legs: Flutter Kick (Quick, small amplitude)
+                const legSpeed = this.animTime * 1.5;
+                this.legL.root.rotation.x = Math.sin(legSpeed) * 0.5;
+                this.legL.joint.rotation.x = Math.sin(legSpeed - 0.5) * 0.3 + 0.3; // Slight knee bend
+
+                this.legR.root.rotation.x = Math.sin(legSpeed + Math.PI) * 0.5;
+                this.legR.joint.rotation.x = Math.sin(legSpeed + Math.PI - 0.5) * 0.3 + 0.3;
+
             } else {
-                // Idle / Treading Water (Floating)
+                // Treading Water (Vertical-ish)
                 this.animTime += dt * 3;
-                
-                // Arms sculling gently
-                this.leftArm.rotation.z = 0.5 + Math.sin(this.animTime) * 0.2;
-                this.rightArm.rotation.z = -0.5 - Math.sin(this.animTime) * 0.2;
-                this.leftArm.rotation.x = 0.2 + Math.cos(this.animTime * 0.8) * 0.2;
-                this.rightArm.rotation.x = 0.2 + Math.cos(this.animTime * 0.8 + Math.PI) * 0.2;
 
-                // Legs treading (eggbeater/frog kick slow)
-                this.leftLeg.rotation.x = 0.2 + Math.sin(this.animTime) * 0.3;
-                this.rightLeg.rotation.x = 0.2 + Math.sin(this.animTime + Math.PI) * 0.3;
-                this.leftLeg.rotation.z = 0.2;
-                this.rightLeg.rotation.z = -0.2;
+                // Arms sculling
+                this.armL.root.rotation.x = 0.5; // Forward
+                this.armL.root.rotation.z = 0.5 + Math.sin(this.animTime) * 0.3;
+                this.armL.joint.rotation.x = -0.5; // Forearms angled
+
+                this.armR.root.rotation.x = 0.5;
+                this.armR.root.rotation.z = -0.5 - Math.sin(this.animTime) * 0.3;
+                this.armR.joint.rotation.x = -0.5;
+
+                // Legs eggbeater (cycling)
+                this.legL.root.rotation.x = Math.sin(this.animTime) * 0.5;
+                this.legL.root.rotation.z = Math.cos(this.animTime) * 0.3;
+                this.legL.joint.rotation.x = 1.0;
+
+                this.legR.root.rotation.x = Math.sin(this.animTime + Math.PI) * 0.5;
+                this.legR.root.rotation.z = Math.cos(this.animTime + Math.PI) * 0.3;
+                this.legR.joint.rotation.x = 1.0;
             }
         } else if (isMoving) {
-            // Walking Animation
-            this.animTime += dt * 12;
-            
-            this.leftLeg.rotation.x = Math.sin(this.animTime) * 0.8;
-            this.rightLeg.rotation.x = Math.sin(this.animTime + Math.PI) * 0.8;
-            this.leftLeg.rotation.z = 0;
-            this.rightLeg.rotation.z = 0;
+            // Walking
+            this.animTime += dt * 10;
 
-            this.leftArm.rotation.x = Math.sin(this.animTime + Math.PI) * 0.6;
-            this.rightArm.rotation.x = Math.sin(this.animTime) * 0.6;
-            this.leftArm.rotation.z = 0.1;
-            this.rightArm.rotation.z = -0.1;
+            // Arms (Opposite to legs)
+            this.armL.root.rotation.x = Math.cos(this.animTime) * 0.6;
+            this.armL.root.rotation.z = 0.1;
+            this.armL.joint.rotation.x = -0.4 - Math.sin(this.animTime) * 0.2; // Slight elbow bend
+
+            this.armR.root.rotation.x = Math.cos(this.animTime + Math.PI) * 0.6;
+            this.armR.root.rotation.z = -0.1;
+            this.armR.joint.rotation.x = -0.4 - Math.sin(this.animTime + Math.PI) * 0.2;
+
+            // Legs
+            // Hip
+            this.legL.root.rotation.x = Math.sin(this.animTime) * 0.8;
+            this.legR.root.rotation.x = Math.sin(this.animTime + Math.PI) * 0.8;
+            
+            // Knee (Only bends back when lifting)
+            // If sin > 0 (leg moving forward), knee straight. If sin < 0 (leg moving back/up), knee bend.
+            // Actually, in walk cycle:
+            // Forward swing: Knee straight
+            // Backward push: Knee straight
+            // Recovery (passing under): Knee bent
+            const kneeL = Math.sin(this.animTime - 1.5); 
+            const kneeR = Math.sin(this.animTime + Math.PI - 1.5);
+            
+            this.legL.joint.rotation.x = kneeL > 0 ? kneeL * 1.5 : 0;
+            this.legR.joint.rotation.x = kneeR > 0 ? kneeR * 1.5 : 0;
+
         } else {
-            // Standing Idle
-            const idleSpeed = 2 * dt;
-            this.leftLeg.rotation.x = THREE.MathUtils.lerp(this.leftLeg.rotation.x, 0, idleSpeed);
-            this.rightLeg.rotation.x = THREE.MathUtils.lerp(this.rightLeg.rotation.x, 0, idleSpeed);
-            this.leftLeg.rotation.z = THREE.MathUtils.lerp(this.leftLeg.rotation.z, 0, idleSpeed);
-            this.rightLeg.rotation.z = THREE.MathUtils.lerp(this.rightLeg.rotation.z, 0, idleSpeed);
+            // Idle
+            const s = Math.sin(Date.now() * 0.003);
+            this.armL.root.rotation.z = 0.1 + s * 0.02;
+            this.armR.root.rotation.z = -0.1 - s * 0.02;
+            this.armL.root.rotation.x = 0;
+            this.armR.root.rotation.x = 0;
             
-            this.leftArm.rotation.x = THREE.MathUtils.lerp(this.leftArm.rotation.x, 0, idleSpeed);
-            this.rightArm.rotation.x = THREE.MathUtils.lerp(this.rightArm.rotation.x, 0, idleSpeed);
-            this.leftArm.rotation.z = THREE.MathUtils.lerp(this.leftArm.rotation.z, 0.1, idleSpeed);
-            this.rightArm.rotation.z = THREE.MathUtils.lerp(this.rightArm.rotation.z, -0.1, idleSpeed);
-
-            // Subtle breathing
-            this.torso.scale.x = 1.0 + Math.sin(Date.now() * 0.003) * 0.02;
-            this.torso.scale.z = 1.0 + Math.sin(Date.now() * 0.003) * 0.02;
+            this.legL.root.rotation.set(0,0,0);
+            this.legR.root.rotation.set(0,0,0);
+            this.legL.joint.rotation.set(0,0,0);
+            this.legR.joint.rotation.set(0,0,0);
+            
+            // Breathing
+            this.torso.rotation.x = s * 0.05;
         }
     }
 
