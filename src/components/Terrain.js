@@ -43,11 +43,11 @@ export class Terrain {
         const posAttribute = this.geometry.attributes.position;
         const vertex = new THREE.Vector3();
 
-        // Noise configuration
-        const scale = 0.002;
-        const octaves = 6;
-        const persistance = 0.5;
-        const lacunarity = 2;
+        // Noise configuration - Smoother settings
+        const scale = 0.0012; // Broader features
+        const octaves = 5; // Reduced octaves for less jitter
+        const persistance = 0.42; // Smoother falloff
+        const lacunarity = 2.1;
 
         for (let i = 0; i < posAttribute.count; i++) {
             vertex.fromBufferAttribute(posAttribute, i);
@@ -66,13 +66,13 @@ export class Terrain {
 
             // Shape terrain: flatten center for lake, raise edges for mountains
             const distFromCenter = Math.sqrt(vertex.x * vertex.x + vertex.z * vertex.z);
-            const mask = Math.max(0, (distFromCenter - 200) / (this.size * 0.4)); // 0 in center, 1 at edges
+            const mask = Math.max(0, (distFromCenter - 200) / (this.size * 0.45)); // Broader transition
             
             // Apply height
             let y = noiseHeight * this.maxHeight;
             
             // Crater/Lake effect
-            y = THREE.MathUtils.lerp(y * 0.2 - 20, y + Math.pow(mask, 2) * 200, mask);
+            y = THREE.MathUtils.lerp(y * 0.15 - 25, y + Math.pow(mask, 2.5) * 200, mask);
 
             posAttribute.setY(i, y);
         }
@@ -111,38 +111,72 @@ export class Terrain {
             shader.fragmentShader = `
                 uniform sampler2D rockTexture;
                 uniform sampler2D grassTexture;
-                uniform float textureRepeat;
                 varying vec3 vPos;
                 varying vec3 vNormalWorld;
+
+                vec4 getTriplanar(sampler2D tex, vec3 pos, vec3 normal, float scale) {
+                    vec3 blend = abs(normal);
+                    blend /= (blend.x + blend.y + blend.z);
+                    
+                    vec4 cx = texture2D(tex, pos.yz * scale);
+                    vec4 cy = texture2D(tex, pos.xz * scale);
+                    vec4 cz = texture2D(tex, pos.xy * scale);
+                    
+                    return cx * blend.x + cy * blend.y + cz * blend.z;
+                }
+
                 ${shader.fragmentShader}
             `.replace(
                 '#include <map_fragment>',
                 `
-                // Triplanar mapping or simple UV mapping
-                vec2 uv = vPos.xz / 2000.0 * 20.0; // Scale UVs
+                float scale = 0.03; // Texture scale
                 
-                vec4 rockColor = texture2D(rockTexture, uv);
-                vec4 grassColor = texture2D(grassTexture, uv);
+                // 1. Textures
+                vec4 grassCol = texture2D(grassTexture, vPos.xz * scale);
+                // Use triplanar for rock to prevent stretching on cliffs
+                vec4 rockCol = getTriplanar(rockTexture, vPos, vNormalWorld, scale);
 
-                // Mix based on slope
-                float slope = 1.0 - vNormalWorld.y; // 0 = flat, 1 = vertical
-                float blend = smoothstep(0.1, 0.4, slope); 
+                // 2. Terrain Analysis
+                float slope = 1.0 - vNormalWorld.y; // 0=flat, 1=vertical
                 
-                // Mix based on height
-                float heightBlend = smoothstep(-10.0, 10.0, vPos.y); // Transition at water levelish
+                // Noise for organic blending
+                float blendNoise = sin(vPos.x * 0.05) * cos(vPos.z * 0.05) * 0.1;
                 
-                // Logic: Grass on flatish ground above water. Rock on slopes or underwater.
-                // Underwater should technically be sand/rock, let's just make it rock for simplicity
+                // Slope Blending (Grass vs Rock)
+                float slopeThreshold = 0.3 + blendNoise;
+                float slopeFactor = smoothstep(slopeThreshold - 0.15, slopeThreshold + 0.15, slope);
                 
-                // Slope dominant
-                vec4 mixedColor = mix(grassColor, rockColor, blend);
+                // Height Blending (Beach / Snow)
+                float beachLevel = 2.0 + blendNoise * 5.0;
+                float snowLevel = 180.0 + blendNoise * 30.0;
+                
+                float beachFactor = 1.0 - smoothstep(beachLevel - 3.0, beachLevel, vPos.y);
+                float snowFactor = smoothstep(snowLevel - 20.0, snowLevel, vPos.y);
 
-                // Height check: if very low (underwater), make it rock/darker
-                if(vPos.y < -5.0) {
-                   mixedColor = rockColor * 0.6; // Darker underwater
+                // 3. Mixing Layers
+                
+                // Base: Mix grass and rock based on slope
+                vec4 finalColor = mix(grassCol, rockCol, slopeFactor);
+                
+                // Beach: Tint sandy color near water, but mostly on flat ground
+                vec3 sandTint = vec3(1.2, 1.1, 0.9);
+                vec4 sandColor = rockCol * vec4(sandTint, 1.0); // Use rock texture for sand grain
+                float sandMix = beachFactor * (1.0 - slopeFactor); // Don't put sand on steep underwater cliffs
+                finalColor = mix(finalColor, sandColor, sandMix);
+
+                // Snow: White cap on peaks
+                vec4 snowColor = vec4(0.95, 0.96, 1.0, 1.0);
+                // Snow doesn't stick to very steep cliffs
+                float snowStick = snowFactor * (1.0 - smoothstep(0.5, 0.8, slope)); 
+                finalColor = mix(finalColor, snowColor, snowStick);
+
+                // Underwater depth effect (simple darkening)
+                if(vPos.y < -2.0) {
+                    finalColor *= 0.5;
+                    finalColor.b += 0.1;
                 }
 
-                diffuseColor *= mixedColor;
+                diffuseColor *= finalColor;
                 `
             );
         };
