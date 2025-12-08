@@ -86,7 +86,8 @@ export class Terrain {
         this.material = new THREE.MeshStandardMaterial({
             roughness: 0.8,
             metalness: 0.1,
-            color: 0xffffff
+            color: 0xffffff,
+            side: THREE.DoubleSide
         });
 
         this.material.onBeforeCompile = (shader) => {
@@ -149,6 +150,7 @@ export class Terrain {
         this.mesh = new THREE.Mesh(this.geometry, this.material);
         this.mesh.receiveShadow = true;
         this.mesh.castShadow = true;
+        this.mesh.updateMatrixWorld(); // Ensure world matrix is ready for raycasting immediately
         this.scene.add(this.mesh);
         
         return this.mesh;

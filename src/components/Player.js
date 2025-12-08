@@ -76,9 +76,7 @@ export class Player {
         return group;
     }
 
-    update(dt, terrainHeight, cameraAngleY) {
-        const isSwimming = this.position.y <= this.waterLevel + 0.5;
-
+    update(dt, getTerrainHeight, cameraAngleY) {
         // Calculate Movement Direction based on Camera Yaw
         const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraAngleY);
         const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraAngleY);
@@ -91,11 +89,46 @@ export class Player {
 
         if (moveDir.length() > 0) moveDir.normalize();
 
-        const speed = isSwimming ? this.swimSpeed : this.walkSpeed;
+        // Determine potential speed
+        // We don't know if we are swimming yet until we check height at new position, 
+        // but for velocity calculation let's assume current state or average.
+        // Actually, we can just use walk speed for movement calc and damp it if needed.
+        // Or check current y.
+        const currentIsSwimming = this.position.y < this.waterLevel;
+        const speed = currentIsSwimming ? this.swimSpeed : this.walkSpeed;
 
-        // Update Position
+        // Update Position X/Z
         this.position.x += moveDir.x * speed * dt;
         this.position.z += moveDir.z * speed * dt;
+
+        // Get Terrain Height at NEW position
+        const terrainHeight = getTerrainHeight(this.position.x, this.position.z);
+        
+        // Determine Swimming State based on terrain depth
+        // If terrain is significantly below water level, we are in deep water
+        const isDeepWater = terrainHeight < (this.waterLevel - 1.5);
+        const isSwimming = isDeepWater;
+
+        // Vertical Movement logic
+        if (isSwimming) {
+            // Swim logic
+            // Target is water surface
+            let targetY = this.waterLevel - 0.5; 
+            
+            // Smoothly move Y to water level
+            this.position.y = THREE.MathUtils.lerp(this.position.y, targetY, 5 * dt);
+
+            // Swim Rotation (horizontal)
+            this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, Math.PI / 2.5, 5 * dt);
+
+        } else {
+            // Walk logic
+            // Snap to terrain immediately to prevent clipping
+            this.position.y = terrainHeight + this.heightOffset;
+
+            // Upright
+            this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, 0, 10 * dt);
+        }
 
         // Rotation (face movement direction smoothly)
         if (moveDir.length() > 0.1) {
@@ -104,26 +137,6 @@ export class Player {
             while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
             while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
             this.rotation += rotDiff * 10 * dt;
-        }
-
-        // Vertical Movement logic
-        if (isSwimming) {
-            // Swim logic
-            let targetY = this.waterLevel - 0.5; // Body mostly submerged
-            this.position.y = THREE.MathUtils.lerp(this.position.y, targetY, 2 * dt);
-
-            // Swim Rotation (horizontal)
-            this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, Math.PI / 2.5, 5 * dt);
-            this.mesh.position.y = this.position.y;
-
-        } else {
-            // Walk logic
-            // Snap to terrain
-            this.position.y = terrainHeight + this.heightOffset;
-
-            // Upright
-            this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, 0, 10 * dt);
-            this.mesh.position.y = this.position.y;
         }
 
         this.mesh.position.copy(this.position);

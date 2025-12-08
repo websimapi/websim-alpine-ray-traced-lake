@@ -127,13 +127,11 @@ export class World {
         if (this.water) this.water.update(time);
 
         if (this.player && this.cameraController) {
-            // Get terrain height at player position
-            const terrainHeight = this.getTerrainHeight(this.player.position.x, this.player.position.z);
-            
             // Get camera yaw to direct player
             const camYaw = this.cameraController.getYaw();
             
-            this.player.update(delta, terrainHeight, camYaw);
+            // Pass terrain height lookup function so player can check height AFTER moving for frame-perfect collision
+            this.player.update(delta, (x, z) => this.getTerrainHeight(x, z), camYaw);
             this.cameraController.update();
         }
     }
