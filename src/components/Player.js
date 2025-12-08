@@ -125,9 +125,9 @@ export class Player {
         this.armL = buildLimb(new THREE.Vector3(-shoulderX, shoulderY, 0), upperArmLen, lowerArmLen, armWidth);
         this.armR = buildLimb(new THREE.Vector3(shoulderX, shoulderY, 0), upperArmLen, lowerArmLen, armWidth);
         
-        // Slight inward tilt at the shoulder so the bicep connects into the torso more naturally
-        this.armL.upperMesh.rotation.z = 0.18;
-        this.armR.upperMesh.rotation.z = -0.18;
+        // Slight outward tilt at the shoulder so the bicep angles a bit away from the torso
+        this.armL.upperMesh.rotation.z = -0.18;
+        this.armR.upperMesh.rotation.z = 0.18;
         
         this.bodyGroup.add(this.armL.root);
         this.bodyGroup.add(this.armR.root);
