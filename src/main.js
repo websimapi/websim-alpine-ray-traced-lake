@@ -4,7 +4,12 @@ import { World } from './World.js';
 // Entry point
 window.addEventListener('DOMContentLoaded', async () => {
     const canvas = document.getElementById('canvas');
-    const world = new World(canvas);
+    
+    // Initialize WebsimSocket for Database/Realtime
+    const room = new WebsimSocket();
+    await room.initialize();
+
+    const world = new World(canvas, room);
     
     try {
         await world.init();

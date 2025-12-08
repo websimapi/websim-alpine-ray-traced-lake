@@ -1,12 +1,17 @@
 import * as THREE from 'three';
 
 export class Player {
-    constructor(scene) {
+    constructor(scene, isRemote = false) {
         this.scene = scene;
+        this.isRemote = isRemote;
         this.position = new THREE.Vector3(0, 100, 0); 
         this.rotation = 0;
 
-        this.keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+        // Keys only needed for local player
+        if (!isRemote) {
+            this.keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+            this.initInput();
+        }
 
         this.mesh = this.createStickFigure();
         this.scene.add(this.mesh);
@@ -17,8 +22,11 @@ export class Player {
 
         this.waterLevel = -2;
         this.heightOffset = 0.2; // Offset to keep feet on ground
-
-        this.initInput();
+        
+        // Remote data interpolation
+        this.targetPos = new THREE.Vector3();
+        this.targetRot = 0;
+        this.targetAction = 'idle';
     }
 
     initInput() {
@@ -27,6 +35,7 @@ export class Player {
     }
 
     onKey(e, pressed) {
+        if (this.isRemote) return;
         const key = e.code.toLowerCase(); 
         // Support both WASD and Arrow keys
         if (key === 'keyw' || key === 'arrowup') this.keys.w = pressed;
@@ -145,7 +154,50 @@ export class Player {
         return group;
     }
 
+    // For remote players to update their state
+    updateRemote(dt, data) {
+        if (!data) return;
+        
+        // Lerp position and rotation
+        this.targetPos.set(data.x, data.y, data.z);
+        this.targetRot = data.rot;
+        
+        this.position.lerp(this.targetPos, 10 * dt);
+        
+        // Handle rotation wrapping
+        let rotDiff = this.targetRot - this.rotation;
+        while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+        while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+        this.rotation += rotDiff * 10 * dt;
+        
+        this.mesh.position.copy(this.position);
+        this.mesh.rotation.y = this.rotation;
+        
+        // Animation
+        const isMoving = this.position.distanceTo(this.targetPos) > 0.1;
+        // Determine swimming from y height relative to water roughly? 
+        // Or pass 'isSwimming' in data. Assuming 'state' field in data for now.
+        const isSwimming = data.state === 'swim';
+        
+        this.animateLimbs(dt, isMoving, isSwimming);
+        
+        // Pitch body based on move
+        if (isSwimming) {
+             // Simple pitch approx from vertical movement
+             // Ideally this comes from network but we can infer
+             const dy = this.targetPos.y - this.position.y;
+             let targetPitch = Math.PI / 2;
+             if (Math.abs(dy) > 0.01) targetPitch -= dy * 5.0;
+             this.bodyGroup.rotation.x = THREE.MathUtils.lerp(this.bodyGroup.rotation.x, targetPitch, 5 * dt);
+        } else {
+             this.bodyGroup.rotation.x = THREE.MathUtils.lerp(this.bodyGroup.rotation.x, 0, 10 * dt);
+             this.bodyGroup.position.y = 0;
+        }
+    }
+
     update(dt, getTerrainHeight, camera) {
+        if (this.isRemote) return;
+
         // State Check
         const terrainHeight = getTerrainHeight(this.position.x, this.position.z);
         const waterHeight = this.waterLevel;

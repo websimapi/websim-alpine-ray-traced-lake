@@ -1,19 +1,21 @@
 import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
+import { RNG } from '../Utils.js';
 
 export class Terrain {
     constructor(scene, loadingManager) {
         this.scene = scene;
-        this.noise2D = createNoise2D();
+        this.noise2D = null; // Will init with seed
         this.geometry = null;
         this.material = null;
         this.mesh = null;
         
         // Settings
         this.size = 2000;
-        this.segments = 256; // High but manageable
+        this.segments = 256; 
         this.maxHeight = 350;
         this.textureRepeat = 10;
+        this.rng = new RNG(12345);
     }
 
     async load() {
@@ -36,7 +38,12 @@ export class Terrain {
         this.grassTex = grassTex;
     }
 
-    generate() {
+    generate(seed) {
+        // Init seeded noise
+        const rng = new RNG(seed);
+        this.noise2D = createNoise2D(() => rng.nextFloat());
+        console.log("Generating terrain with seed:", seed);
+
         this.geometry = new THREE.PlaneGeometry(this.size, this.size, this.segments, this.segments);
         this.geometry.rotateX(-Math.PI / 2);
 
