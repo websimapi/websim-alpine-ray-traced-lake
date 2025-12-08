@@ -125,9 +125,9 @@ export class Player {
         this.armL = buildLimb(new THREE.Vector3(-shoulderX, shoulderY, 0), upperArmLen, lowerArmLen, armWidth);
         this.armR = buildLimb(new THREE.Vector3(shoulderX, shoulderY, 0), upperArmLen, lowerArmLen, armWidth);
         
-        // Slight outward tilt at the shoulder so the bicep angles a bit away from the torso
-        this.armL.upperMesh.rotation.z = -0.18;
-        this.armR.upperMesh.rotation.z = 0.18;
+        // Stronger inward tilt at the shoulder so the bicep tucks in toward the torso
+        this.armL.upperMesh.rotation.z = 0.25;
+        this.armR.upperMesh.rotation.z = -0.25;
         
         this.bodyGroup.add(this.armL.root);
         this.bodyGroup.add(this.armR.root);
@@ -227,15 +227,15 @@ export class Player {
                 // Left Arm
                 const armLPhase = this.animTime;
                 this.armL.root.rotation.x = Math.sin(armLPhase) * 2.5; // Big swing
-                // Tilt slightly away from body
-                this.armL.root.rotation.z = -(Math.abs(Math.sin(armLPhase)) * 0.5 + 0.2);
+                // Tilt in toward body through the stroke
+                this.armL.root.rotation.z = (Math.abs(Math.sin(armLPhase)) * 0.5 + 0.35);
                 this.armL.joint.rotation.x = -Math.max(0, Math.cos(armLPhase)) * 1.5; // Bend elbow on return
 
                 // Right Arm (Opposite phase)
                 const armRPhase = this.animTime + Math.PI;
                 this.armR.root.rotation.x = Math.sin(armRPhase) * 2.5;
-                // Tilt slightly away from body (mirrored)
-                this.armR.root.rotation.z = (Math.abs(Math.sin(armRPhase)) * 0.5 + 0.2);
+                // Tilt in toward body (mirrored)
+                this.armR.root.rotation.z = -(Math.abs(Math.sin(armRPhase)) * 0.5 + 0.35);
                 this.armR.joint.rotation.x = -Math.max(0, Math.cos(armRPhase)) * 1.5;
 
                 // Legs: Flutter Kick (Quick, small amplitude)
@@ -250,13 +250,13 @@ export class Player {
                 // Treading Water (Vertical-ish)
                 this.animTime += dt * 3;
 
-                // Arms sculling
+                // Arms sculling, tilted in toward body
                 this.armL.root.rotation.x = 0.5; // Forward
-                this.armL.root.rotation.z = 0.5 + Math.sin(this.animTime) * 0.3;
+                this.armL.root.rotation.z = 0.8 + Math.sin(this.animTime) * 0.35;
                 this.armL.joint.rotation.x = -0.5; // Forearms angled
 
                 this.armR.root.rotation.x = 0.5;
-                this.armR.root.rotation.z = -0.5 - Math.sin(this.animTime) * 0.3;
+                this.armR.root.rotation.z = -0.8 - Math.sin(this.animTime) * 0.35;
                 this.armR.joint.rotation.x = -0.5;
 
                 // Legs eggbeater (cycling)
@@ -272,13 +272,13 @@ export class Player {
             // Walking
             this.animTime += dt * 10;
 
-            // Arms (Opposite to legs)
+            // Arms (Opposite to legs), tilted inward toward torso
             this.armL.root.rotation.x = Math.cos(this.animTime) * 0.6;
-            this.armL.root.rotation.z = 0.1;
+            this.armL.root.rotation.z = 0.25;
             this.armL.joint.rotation.x = -0.4 - Math.sin(this.animTime) * 0.2; // Slight elbow bend
 
             this.armR.root.rotation.x = Math.cos(this.animTime + Math.PI) * 0.6;
-            this.armR.root.rotation.z = -0.1;
+            this.armR.root.rotation.z = -0.25;
             this.armR.joint.rotation.x = -0.4 - Math.sin(this.animTime + Math.PI) * 0.2;
 
             // Legs
@@ -301,8 +301,9 @@ export class Player {
         } else {
             // Idle
             const s = Math.sin(Date.now() * 0.003);
-            this.armL.root.rotation.z = 0.1 + s * 0.02;
-            this.armR.root.rotation.z = -0.1 - s * 0.02;
+            // Arms hang in with a slight inward tilt and subtle sway
+            this.armL.root.rotation.z = 0.25 + s * 0.02;
+            this.armR.root.rotation.z = -0.25 - s * 0.02;
             this.armL.root.rotation.x = 0;
             this.armR.root.rotation.x = 0;
             
