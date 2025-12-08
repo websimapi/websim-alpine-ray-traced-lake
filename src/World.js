@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Terrain } from './components/Terrain.js';
 import { WaterSystem } from './components/Water.js';
 import { SkySystem } from './components/Sky.js';
 import { Trees } from './components/Trees.js';
+import { Player } from './components/Player.js';
+import { CameraController } from './components/CameraController.js';
 
 export class World {
     constructor(canvas) {
@@ -11,7 +12,11 @@ export class World {
         this.scene = null;
         this.camera = null;
         this.renderer = null;
-        this.controls = null;
+        this.cameraController = null;
+        this.player = null;
+        this.raycaster = new THREE.Raycaster();
+        this.rayDown = new THREE.Vector3(0, -1, 0);
+        
         this.terrain = null;
         this.water = null;
         this.sky = null;
@@ -41,14 +46,6 @@ export class World {
         // Camera
         this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 1, 20000);
         this.camera.position.set(0, 30, 100);
-
-        // Controls
-        this.controls = new OrbitControls(this.camera, this.canvas);
-        this.controls.target.set(0, 10, 0);
-        this.controls.enableDamping = true;
-        this.controls.minDistance = 20;
-        this.controls.maxDistance = 1000;
-        this.controls.maxPolarAngle = Math.PI / 2 - 0.05; // Prevent going under water visually
 
         // Fog
         this.scene.fog = new THREE.FogExp2(0x5ca5c9, 0.0015); // Blue-ish atmospheric fog
@@ -89,6 +86,16 @@ export class World {
         this.trees = new Trees(this.scene, terrainMesh);
         this.trees.generate();
 
+        // Player & Camera Setup
+        this.player = new Player(this.scene);
+        
+        // Find safe starting spot (center of map)
+        const startY = this.getTerrainHeight(0, 0);
+        this.player.position.set(0, startY, 0);
+
+        this.cameraController = new CameraController(this.camera, this.canvas);
+        this.cameraController.setTarget(this.player.mesh);
+
         // Handle window resize
         window.addEventListener('resize', () => this.onResize());
     }
@@ -100,15 +107,35 @@ export class World {
         });
     }
 
+    getTerrainHeight(x, z) {
+        if (!this.terrain || !this.terrain.getMesh()) return 0;
+        
+        // Raycast down from high up
+        this.raycaster.set(new THREE.Vector3(x, 5000, z), this.rayDown);
+        const intersects = this.raycaster.intersectObject(this.terrain.getMesh());
+        
+        if (intersects.length > 0) {
+            return intersects[0].point.y;
+        }
+        return 0;
+    }
+
     update() {
         const delta = this.clock.getDelta();
         const time = this.clock.getElapsedTime();
 
-        this.controls.update();
         if (this.water) this.water.update(time);
-        
-        // Simple subtle camera float
-        // this.camera.position.y += Math.sin(time * 0.5) * 0.05;
+
+        if (this.player && this.cameraController) {
+            // Get terrain height at player position
+            const terrainHeight = this.getTerrainHeight(this.player.position.x, this.player.position.z);
+            
+            // Get camera yaw to direct player
+            const camYaw = this.cameraController.getYaw();
+            
+            this.player.update(delta, terrainHeight, camYaw);
+            this.cameraController.update();
+        }
     }
 
     render() {
